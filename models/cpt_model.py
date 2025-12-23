@@ -52,6 +52,10 @@ class CPTModel(BaseModel):
         parser.add_argument('--lambda_simsiam_he', type=float, default=1.0,
                     help='weight for SimSiam he)')
 
+        # Style Transfer loss 
+        parser.add_argument('--lambda_style', type=float, default=100.0, help='weight for style transfer loss (Gram matrix)')
+        parser.add_argument('--lambda_content', type=float, default=1.0, help='weight for content preservation loss (L1 on features)')
+
 
         opt, _ = parser.parse_known_args()
 
@@ -222,30 +226,44 @@ class CPTModel(BaseModel):
         feat_fake_B = self.netG(self.fake_B, self.nce_layers, encode_only=True)
         feat_real_B = self.netG(self.real_B, self.nce_layers, encode_only=True)
 
-        # --- Tiny SimSiam auxiliary (cheap, feature-space) ---
-        self.loss_SimSiam = 0.0
-                
-        if self.opt.lambda_simsiam > 0:
-            # pick a mid-level feature map from feat_fake_B
-            idx = self.simsiam_layer_index if self.simsiam_layer_index < len(feat_fake_B) else -2
-            f_fake = feat_fake_B[idx]  # (B,C,H,W)
-            f_real_B = feat_real_B[idx]
-            f_real_A = feat_real_A[idx]
+        content_idx = self.simsiam_layer_index if self.simsiam_layer_index < len(feat_fake_B) else -2
+        f_fake_content = feat_fake_B[content_idx] 
+        f_real_B_content = feat_real_B[content_idx]
+        f_real_A_content = feat_real_A[content_idx]
 
+        # --- Tiny SimSiam ---
+                
+        if self.opt.lambda_simsiam > 0:         
             # lazily create the head once we know channels; then register to optimizer_G
-            if (self.simsiam_head is None) or (getattr(self.simsiam_head, 'c', None) != f_fake.shape[1]):
-                self.simsiam_head = TinySimSiamHead(opt=self.opt, c=f_fake.shape[1], proj_dim=256, pred_dim=128)
+            if (self.simsiam_head is None) or (getattr(self.simsiam_head, 'c', None) != f_fake_content.shape[1]):
+                self.simsiam_head = TinySimSiamHead(opt=self.opt, c=f_fake_content.shape[1], proj_dim=256, pred_dim=128)
                 self.simsiam_head.to(self.device)
                 if self.isTrain:
                     # add its parameters to G optimizer without resetting state
                     self.optimizer_G.add_param_group({'params': self.simsiam_head.parameters()})
 
-            siam_gt_loss = self.simsiam_head(self.current_epoch, f_fake, f_real_B, paired=True)
-            siam_he_loss = self.simsiam_head(self.current_epoch, f_fake, f_real_A)
+            siam_gt_loss = self.simsiam_head(self.current_epoch, f_fake_content, f_real_B_content, paired=True)
+            siam_he_loss = self.simsiam_head(self.current_epoch, f_fake_content, f_real_A_content)
             self.loss_SimSiam_he = self.opt.lambda_simsiam_he * siam_he_loss
             self.loss_SimSiam = self.opt.lambda_simsiam * siam_gt_loss
         
+        # --- Style Loss (Paired with SimSiam_GT -> Real B) ---
+        if self.opt.lambda_style > 0:
+            # Enforce that f_fake has the same texture statistics (Gram Matrix) as f_real_B
+            style_loss_total = 0.0
+            # Loop through all available layers in the list
+            for f_fake, f_real in zip(feat_fake_B, feat_real_B):
+                # Calculate Gram Matrix loss for this specific layer
+                layer_loss = compute_style_loss(f_fake, f_real)
+                style_loss_total += layer_loss
+            self.loss_Style = self.opt.lambda_style * (style_loss_total / len(feat_fake_B))
 
+        # --- Content Loss (Paired with SimSiam_HE -> Real A) ---
+        if self.opt.lambda_content > 0:
+            # Enforce that f_fake spatially matches f_real_A
+            self.loss_Content = self.opt.lambda_content * compute_content_loss(f_fake_content, f_real_A_content)
+
+        
         if self.opt.nce_idt:
             feat_idt_B = self.netG(self.idt_B, self.nce_layers, encode_only=True)
 
@@ -287,8 +305,7 @@ class CPTModel(BaseModel):
             self.loss_GP = 0
 
         # combine loss and calculate gradients
-        #self.loss_G = self.loss_G_GAN + loss_NCE_all + self.loss_GP + self.loss_SimSiam
-        self.loss_G = self.loss_G_GAN + self.loss_GP + self.loss_SimSiam + self.loss_SimSiam_he
+        self.loss_G = self.loss_G_GAN + self.loss_GP + self.loss_SimSiam + self.loss_SimSiam_he + self.loss_style + self.loss_content
 
         return self.loss_G
 
@@ -311,3 +328,19 @@ class CPTModel(BaseModel):
             total_nce_loss += loss.mean()
 
         return total_nce_loss / n_layers
+
+    def gram_matrix(input):
+        a, b, c, d = input.size()  
+        features = input.view(a, b, c * d)  
+        G = torch.bmm(features, features.transpose(1, 2))  # compute the gram product
+        return G.div(a * b * c * d)  # normalize
+
+    def compute_style_loss(features_fake, features_real):
+        # MSE of Gram Matrices
+        target_gram = gram_matrix(features_real).detach() # detach to stop gradient on target
+        input_gram = gram_matrix(features_fake)
+        return torch.nn.functional.mse_loss(input_gram, target_gram)
+    
+    def compute_content_loss(features_fake, features_real):
+        # Standard L1 or MSE loss directly on feature maps
+        return torch.nn.functional.l1_loss(features_fake, features_real.detach())
