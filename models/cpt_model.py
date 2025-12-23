@@ -260,12 +260,14 @@ class CPTModel(BaseModel):
                 layer_loss = self.compute_style_loss(f_fake, f_real)
                 style_loss_total += layer_loss
             self.loss_Style = self.opt.lambda_style * (style_loss_total / len(feat_fake_B))
-
+        else:
+            self.loss_Style = 0.0
         # --- Content Loss (Paired with SimSiam_HE -> Real A) ---
         if self.opt.lambda_content > 0:
             # Enforce that f_fake spatially matches f_real_A
             self.loss_Content = self.opt.lambda_content * self.compute_content_loss(f_fake_content, f_real_A_content)
-
+        else:
+            self.loss_Content = 0.0
         
         if self.opt.nce_idt:
             feat_idt_B = self.netG(self.idt_B, self.nce_layers, encode_only=True)
