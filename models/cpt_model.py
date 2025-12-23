@@ -86,7 +86,10 @@ class CPTModel(BaseModel):
             self.loss_names += ['SimSiam', 'SimSiam_he'] 
         self.simsiam_layer_index = opt.simsiam_layer_index
         self.simsiam_head = None  # lazy create when we know channel dim
-        #######################################
+        
+
+        if self.isTrain and opt.lambda_style >0:
+            self.loss_names += ['Style', 'Content']
 
 
         if opt.nce_idt and self.isTrain:
@@ -254,14 +257,14 @@ class CPTModel(BaseModel):
             # Loop through all available layers in the list
             for f_fake, f_real in zip(feat_fake_B, feat_real_B):
                 # Calculate Gram Matrix loss for this specific layer
-                layer_loss = compute_style_loss(f_fake, f_real)
+                layer_loss = self.compute_style_loss(f_fake, f_real)
                 style_loss_total += layer_loss
             self.loss_Style = self.opt.lambda_style * (style_loss_total / len(feat_fake_B))
 
         # --- Content Loss (Paired with SimSiam_HE -> Real A) ---
         if self.opt.lambda_content > 0:
             # Enforce that f_fake spatially matches f_real_A
-            self.loss_Content = self.opt.lambda_content * compute_content_loss(f_fake_content, f_real_A_content)
+            self.loss_Content = self.opt.lambda_content * self.compute_content_loss(f_fake_content, f_real_A_content)
 
         
         if self.opt.nce_idt:
@@ -305,7 +308,7 @@ class CPTModel(BaseModel):
             self.loss_GP = 0
 
         # combine loss and calculate gradients
-        self.loss_G = self.loss_G_GAN + self.loss_GP + self.loss_SimSiam + self.loss_SimSiam_he + self.loss_style + self.loss_content
+        self.loss_G = self.loss_G_GAN + self.loss_GP + self.loss_SimSiam + self.loss_SimSiam_he + self.loss_Style + self.loss_Sontent
 
         return self.loss_G
 
