@@ -154,15 +154,19 @@ class CPTModel(BaseModel):
         self.loss_D = self.compute_D_loss()
         self.loss_D.backward()
         self.optimizer_D.step()
+        
         # update G
         self.set_requires_grad(self.netD, False)
         self.optimizer_G.zero_grad()
-        if self.opt.netF == 'mlp_sample':
+        
+        if self.opt.netF == 'mlp_sample' and hasattr(self, 'optimizer_F'):
             self.optimizer_F.zero_grad()
+            
         self.loss_G = self.compute_G_loss()
         self.loss_G.backward()
         self.optimizer_G.step()
-        if self.opt.netF == 'mlp_sample':
+        
+        if self.opt.netF == 'mlp_sample' and hasattr(self, 'optimizer_F'):
             self.optimizer_F.step()
 
     def set_input(self, input):
