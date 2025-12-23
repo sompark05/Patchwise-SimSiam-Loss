@@ -308,7 +308,7 @@ class CPTModel(BaseModel):
             self.loss_GP = 0
 
         # combine loss and calculate gradients
-        self.loss_G = self.loss_G_GAN + self.loss_GP + self.loss_SimSiam + self.loss_SimSiam_he + self.loss_Style + self.loss_Sontent
+        self.loss_G = self.loss_G_GAN + self.loss_GP + self.loss_SimSiam + self.loss_SimSiam_he + self.loss_Style + self.loss_Content
 
         return self.loss_G
 
@@ -332,18 +332,18 @@ class CPTModel(BaseModel):
 
         return total_nce_loss / n_layers
 
-    def gram_matrix(input):
+    def gram_matrix(self, input):
         a, b, c, d = input.size()  
         features = input.view(a, b, c * d)  
         G = torch.bmm(features, features.transpose(1, 2))  # compute the gram product
         return G.div(a * b * c * d)  # normalize
 
-    def compute_style_loss(features_fake, features_real):
+    def compute_style_loss(self, features_fake, features_real):
         # MSE of Gram Matrices
         target_gram = gram_matrix(features_real).detach() # detach to stop gradient on target
         input_gram = gram_matrix(features_fake)
         return torch.nn.functional.mse_loss(input_gram, target_gram)
     
-    def compute_content_loss(features_fake, features_real):
+    def compute_content_loss(self, features_fake, features_real):
         # Standard L1 or MSE loss directly on feature maps
         return torch.nn.functional.l1_loss(features_fake, features_real.detach())
