@@ -340,8 +340,8 @@ class CPTModel(BaseModel):
 
     def compute_style_loss(self, features_fake, features_real):
         # MSE of Gram Matrices
-        target_gram = gram_matrix(features_real).detach() # detach to stop gradient on target
-        input_gram = gram_matrix(features_fake)
+        target_gram = self.gram_matrix(features_real).detach() # detach to stop gradient on target
+        input_gram = self.gram_matrix(features_fake)
         return torch.nn.functional.mse_loss(input_gram, target_gram)
     
     def compute_content_loss(self, features_fake, features_real):
